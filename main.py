@@ -18,7 +18,8 @@ def home():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
+    # use_reloader=False evita conflictos de procesos en Render
+    app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # ==========================================
 # 2. BASE DE DATOS (SQLite local)
@@ -263,7 +264,8 @@ def main():
     app.add_handler(CommandHandler("precio", consultar_precio))
 
     print("🚀 Bot de Alertas de Precio iniciado...")
-    app.run_polling()
+    # stop_signals=None evita que el hilo de Telegram choque con señales del sistema en Render
+    app.run_polling(stop_signals=None)
 
 if __name__ == "__main__":
     main()
