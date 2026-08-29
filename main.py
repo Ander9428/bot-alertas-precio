@@ -60,10 +60,10 @@ def init_db():
 init_db()
 
 # ==========================================
-# 3. OBTENCIÓN DE PRECIOS CON ALTA PRECISIÓN
+# 3. OBTENCIÓN Y FORMATEO DE PRECIOS
 # ==========================================
 def format_price(price, symbol):
-    """Formatea los decimales según la clase de activo (5 para Forex, 2 para Cripto/Índices)."""
+    """Formatea decimales según la clase de activo (5 para Forex, 2 para Cripto/Índices/Oro)."""
     sym = symbol.upper()
     if any(c in sym for c in ["BTC", "ETH", "SOL", "NAS100", "US30", "SP500", "XAU", "ORO", "GOLD"]):
         return f"{price:.2f}"
@@ -71,9 +71,28 @@ def format_price(price, symbol):
 
 def get_live_price(symbol_raw):
     sym = symbol_raw.upper().replace("/", "").replace("-", "").strip()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
 
-    # 1. CRIPTOMONEDAS
+    # 1. FOREX DIRECTO DESDE TRADINGVIEW (OANDA - SIN CUENTAS NI TOKENS)
+    if len(sym) == 6 and sym.isalpha():
+        tv_ticker = f"OANDA:{sym}"
+        url_tv = "https://scanner.tradingview.com/forex/scan"
+        payload = {
+            "symbols": {"tickers": [tv_ticker]},
+            "columns": ["close"]
+        }
+        try:
+            res = requests.post(url_tv, json=payload, headers=headers, timeout=4).json()
+            if "data" in res and len(res["data"]) > 0:
+                price = res["data"][0]["d"][0]
+                if price is not None:
+                    return float(price), sym
+        except Exception as e:
+            logger.error(f"Error TradingView OANDA para {tv_ticker}: {e}")
+
+    # 2. CRIPTOMONEDAS (Coinbase / CryptoCompare)
     crypto_base = {
         "BTC": "BTC", "BTCUSD": "BTC", "BTCUSDT": "BTC",
         "ETH": "ETH", "ETHUSD": "ETH", "ETHUSDT": "ETH",
@@ -84,25 +103,16 @@ def get_live_price(symbol_raw):
         base_coin = crypto_base[sym]
         try:
             url = f"https://api.coinbase.com/v2/prices/{base_coin}-USD/spot"
-            res = requests.get(url, headers=headers, timeout=5).json()
+            res = requests.get(url, headers=headers, timeout=4).json()
             if "data" in res and "amount" in res["data"]:
                 return float(res["data"]["amount"]), sym
         except Exception as e:
             logger.error(f"Error Coinbase para {sym}: {e}")
 
-        try:
-            url = f"https://min-api.cryptocompare.com/data/price?fsym={base_coin}&tsyms=USD"
-            res = requests.get(url, headers=headers, timeout=5).json()
-            if "USD" in res:
-                return float(res["USD"]), sym
-        except Exception as e:
-            logger.error(f"Error CryptoCompare para {sym}: {e}")
-
-    # 2. FOREX / COMMODITIES / ÍNDICES
+    # 3. RESPALDO (Yahoo Finance para Índices, Oro o Commodities)
     yahoo_map = {
         "XAUUSD": "GC=F", "ORO": "GC=F", "GOLD": "GC=F", "SILVER": "SI=F",
-        "NAS100": "NQ=F", "NASDAQ": "NQ=F", "US30": "YM=F", "DOW": "YM=F", "SP500": "ES=F",
-        "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD"
+        "NAS100": "NQ=F", "NASDAQ": "NQ=F", "US30": "YM=F", "DOW": "YM=F", "SP500": "ES=F"
     }
     ticker_symbol = yahoo_map.get(sym, sym)
     if ticker_symbol == sym and len(sym) == 6 and sym.isalpha():
@@ -110,11 +120,10 @@ def get_live_price(symbol_raw):
 
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker_symbol}?range=1d&interval=1m"
-        res = requests.get(url, headers=headers, timeout=5).json()
+        res = requests.get(url, headers=headers, timeout=4).json()
         result = res.get("chart", {}).get("result")
         if result and len(result) > 0:
-            meta = result[0].get("meta", {})
-            price = meta.get("regularMarketPrice")
+            price = result[0].get("meta", {}).get("regularMarketPrice")
             if price is not None:
                 return float(price), ticker_symbol
     except Exception as e:
@@ -131,7 +140,7 @@ def get_live_price(symbol_raw):
     return None, ticker_symbol
 
 # ==========================================
-# 4. TECLADOS Y MENÚS
+# 4. TECLADOS Y MENÚS DE TELEGRAM
 # ==========================================
 def main_menu_keyboard():
     keyboard = [
@@ -148,10 +157,10 @@ def main_menu_keyboard():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
-        "🤖 **Bot de Alertas Inteligente**\n\n"
+        "🤖 **Bot de Alertas Inteligente (TradingView / OANDA Feed)**\n\n"
         "💡 **Uso ultrarrápido:**\n"
-        "• **Ver Precio:** Escribe solo el activo (ej: `BTCUSD` o `GBPUSD`).\n"
-        "• **Crear Alerta:** Escribe activo y precio objetivo (ej: `BTCUSD 65000` o `GBPUSD 1.35300`). El bot detectará automáticamente si es al alza o a la baja."
+        "• **Ver Precio:** Escribe solo el activo (ej: `GBPUSD` o `BTCUSD`).\n"
+        "• **Crear Alerta:** Escribe activo y precio objetivo (ej: `GBPUSD 1.35340` o `BTCUSD 65000`). El bot detectará automáticamente si es al alza o a la baja."
     )
     if update.message:
         await update.message.reply_text(texto, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
@@ -168,7 +177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_precio":
         back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
         await query.message.edit_text(
-            "💵 **Consultar Precio**\n\nEscribe directamente el activo en el chat:\n`BTCUSD`, `GBPUSD` o `XAUUSD`",
+            "💵 **Consultar Precio**\n\nEscribe directamente el activo en el chat:\n`GBPUSD`, `BTCUSD` o `XAUUSD`",
             reply_markup=back_btn,
             parse_mode="Markdown"
         )
@@ -176,7 +185,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_crear":
         back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
         await query.message.edit_text(
-            "🔔 **Crear Alerta**\n\nEscribe el activo seguido del precio objetivo:\n• `BTCUSD 68000`\n• `GBPUSD 1.35500`\n• `XAUUSD 2500`",
+            "🔔 **Crear Alerta**\n\nEscribe el activo seguido del precio objetivo:\n• `GBPUSD 1.35340`\n• `BTCUSD 68000`\n• `XAUUSD 2500`",
             reply_markup=back_btn,
             parse_mode="Markdown"
         )
@@ -193,14 +202,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ==========================================
-# 5. MENSAJES DIRECTOS SIN COMANDOS
+# 5. MANEJO DE MENSAJES DIRECTOS
 # ==========================================
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     parts = text.split()
     back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("📱 Menú Principal", callback_data="menu_start")]])
 
-    # 1. Consultar precio
+    # 1. Consulta simple de precio
     if len(parts) == 1:
         symbol = parts[0].upper().replace("/", "").strip()
         price, _ = get_live_price(symbol)
@@ -211,7 +220,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text(f"❌ No se encontró el precio de `{symbol}`.", reply_markup=back_btn, parse_mode="Markdown")
 
-    # 2. Crear Alerta Simplificada
+    # 2. Creación automática de alerta (ej: GBPUSD 1.35340)
     elif len(parts) == 2:
         symbol = parts[0].upper().replace("/", "").strip()
         try:
@@ -256,7 +265,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         except ValueError:
             await update.message.reply_text("❌ El precio debe ser un número válido. Ejemplo: `GBPUSD 1.35340`", reply_markup=back_btn)
 
-    # 3. Crear Alerta con operador explícito
+    # 3. Creación con operador explícito (ej: GBPUSD > 1.35340)
     elif len(parts) == 3 and parts[1] in [">", "<"]:
         symbol = parts[0].upper().replace("/", "").strip()
         condition = parts[1]
@@ -293,7 +302,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ El precio debe ser un número válido.", reply_markup=back_btn)
 
 # ==========================================
-# 6. GESTIÓN Y BUCLE EN SEGUNDO PLANO
+# 6. VERIFICADOR DE ALERTAS SEGUNDO PLANO
 # ==========================================
 async def mis_alertas_callback(query):
     user_id = query.from_user.id
