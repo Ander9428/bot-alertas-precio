@@ -60,49 +60,49 @@ def init_db():
 init_db()
 
 # ==========================================
-# 3. OBTENCIÓN DE PRECIOS ANTIBLOQUEO
+# 3. OBTENCIÓN DE PRECIOS CON ALTA PRECISIÓN
 # ==========================================
+def format_price(price, symbol):
+    """Formatea los decimales según la clase de activo (5 para Forex, 2 para Cripto/Índices)."""
+    sym = symbol.upper()
+    if any(c in sym for c in ["BTC", "ETH", "SOL", "NAS100", "US30", "SP500", "XAU", "ORO", "GOLD"]):
+        return f"{price:.2f}"
+    return f"{price:.5f}"
+
 def get_live_price(symbol_raw):
     sym = symbol_raw.upper().replace("/", "").replace("-", "").strip()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-    # 1. CRIPTOOMONEDAS (Binance API + Fallback CoinGecko)
-    crypto_map = {
-        "BTC": "BTCUSDT", "BTCUSD": "BTCUSDT", "BTCUSDT": "BTCUSDT",
-        "ETH": "ETHUSDT", "ETHUSD": "ETHUSDT", "ETHUSDT": "ETHUSDT",
-        "SOL": "SOLUSDT", "SOLUSD": "SOLUSDT", "SOLUSDT": "SOLUSDT"
+    # 1. CRIPTOMONEDAS
+    crypto_base = {
+        "BTC": "BTC", "BTCUSD": "BTC", "BTCUSDT": "BTC",
+        "ETH": "ETH", "ETHUSD": "ETH", "ETHUSDT": "ETH",
+        "SOL": "SOL", "SOLUSD": "SOL", "SOLUSDT": "SOL"
     }
-    if sym in crypto_map:
-        # Intento A: Binance
+
+    if sym in crypto_base:
+        base_coin = crypto_base[sym]
         try:
-            binance_sym = crypto_map[sym]
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_sym}"
+            url = f"https://api.coinbase.com/v2/prices/{base_coin}-USD/spot"
             res = requests.get(url, headers=headers, timeout=5).json()
-            if "price" in res:
-                return float(res["price"]), sym
+            if "data" in res and "amount" in res["data"]:
+                return float(res["data"]["amount"]), sym
         except Exception as e:
-            logger.error(f"Error Binance API para {sym}: {e}")
+            logger.error(f"Error Coinbase para {sym}: {e}")
 
-        # Intento B: CoinGecko (Respaldo)
-        cg_map = {
-            "BTC": "bitcoin", "BTCUSD": "bitcoin", "BTCUSDT": "bitcoin",
-            "ETH": "ethereum", "ETHUSD": "ethereum", "ETHUSDT": "ethereum",
-            "SOL": "solana", "SOLUSD": "solana", "SOLUSDT": "solana"
-        }
-        if sym in cg_map:
-            try:
-                cg_id = cg_map[sym]
-                url = f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd"
-                res = requests.get(url, headers=headers, timeout=5).json()
-                if cg_id in res and "usd" in res[cg_id]:
-                    return float(res[cg_id]["usd"]), sym
-            except Exception as e:
-                logger.error(f"Error CoinGecko para {sym}: {e}")
+        try:
+            url = f"https://min-api.cryptocompare.com/data/price?fsym={base_coin}&tsyms=USD"
+            res = requests.get(url, headers=headers, timeout=5).json()
+            if "USD" in res:
+                return float(res["USD"]), sym
+        except Exception as e:
+            logger.error(f"Error CryptoCompare para {sym}: {e}")
 
-    # 2. FOREX / COMMODITIES / ÍNDICES (Yahoo Finance API Directa)
+    # 2. FOREX / COMMODITIES / ÍNDICES
     yahoo_map = {
         "XAUUSD": "GC=F", "ORO": "GC=F", "GOLD": "GC=F", "SILVER": "SI=F",
-        "NAS100": "NQ=F", "NASDAQ": "NQ=F", "US30": "YM=F", "DOW": "YM=F", "SP500": "ES=F"
+        "NAS100": "NQ=F", "NASDAQ": "NQ=F", "US30": "YM=F", "DOW": "YM=F", "SP500": "ES=F",
+        "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD"
     }
     ticker_symbol = yahoo_map.get(sym, sym)
     if ticker_symbol == sym and len(sym) == 6 and sym.isalpha():
@@ -118,16 +118,15 @@ def get_live_price(symbol_raw):
             if price is not None:
                 return float(price), ticker_symbol
     except Exception as e:
-        logger.error(f"Error Yahoo Direct API para {ticker_symbol}: {e}")
+        logger.error(f"Error Yahoo Direct para {ticker_symbol}: {e}")
 
-    # 3. FALLBACK FINAL (Librería yfinance)
     try:
         ticker = yf.Ticker(ticker_symbol)
         data = ticker.history(period="5d")
         if not data.empty:
             return float(data['Close'].dropna().iloc[-1]), ticker_symbol
     except Exception as e:
-        logger.error(f"Error yfinance fallback para {ticker_symbol}: {e}")
+        logger.error(f"Error yfinance para {ticker_symbol}: {e}")
 
     return None, ticker_symbol
 
@@ -151,8 +150,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = (
         "🤖 **Bot de Alertas Inteligente**\n\n"
         "💡 **Uso ultrarrápido:**\n"
-        "• **Ver Precio:** Escribe solo el activo (ej: `BTCUSD` o `GBPAUD`).\n"
-        "• **Crear Alerta:** Escribe activo y precio objetivo (ej: `BTCUSD 65000` o `GBPUSD 1.3150`). El bot detectará automáticamente si es al alza o a la baja."
+        "• **Ver Precio:** Escribe solo el activo (ej: `BTCUSD` o `GBPUSD`).\n"
+        "• **Crear Alerta:** Escribe activo y precio objetivo (ej: `BTCUSD 65000` o `GBPUSD 1.35300`). El bot detectará automáticamente si es al alza o a la baja."
     )
     if update.message:
         await update.message.reply_text(texto, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
@@ -169,7 +168,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_precio":
         back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
         await query.message.edit_text(
-            "💵 **Consultar Precio**\n\nEscribe directamente el activo en el chat:\n`BTCUSD`, `GBPAUD` o `XAUUSD`",
+            "💵 **Consultar Precio**\n\nEscribe directamente el activo en el chat:\n`BTCUSD`, `GBPUSD` o `XAUUSD`",
             reply_markup=back_btn,
             parse_mode="Markdown"
         )
@@ -177,7 +176,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "menu_crear":
         back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
         await query.message.edit_text(
-            "🔔 **Crear Alerta**\n\nEscribe el activo seguido del precio objetivo:\n• `BTCUSD 68000`\n• `GBPUSD 1.3150`\n• `GBPAUD 1.9200`",
+            "🔔 **Crear Alerta**\n\nEscribe el activo seguido del precio objetivo:\n• `BTCUSD 68000`\n• `GBPUSD 1.35500`\n• `XAUUSD 2500`",
             reply_markup=back_btn,
             parse_mode="Markdown"
         )
@@ -201,17 +200,18 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     parts = text.split()
     back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("📱 Menú Principal", callback_data="menu_start")]])
 
-    # 1. Consultar precio (Ejemplo: "BTCUSD" o "GBPAUD")
+    # 1. Consultar precio
     if len(parts) == 1:
         symbol = parts[0].upper().replace("/", "").strip()
         price, _ = get_live_price(symbol)
         
         if price:
-            await update.message.reply_text(f"💵 **Precio Actual de {symbol}:** `{price:.4f}`", reply_markup=back_btn, parse_mode="Markdown")
+            p_formatted = format_price(price, symbol)
+            await update.message.reply_text(f"💵 **Precio Actual de {symbol}:** `{p_formatted}`", reply_markup=back_btn, parse_mode="Markdown")
         else:
             await update.message.reply_text(f"❌ No se encontró el precio de `{symbol}`.", reply_markup=back_btn, parse_mode="Markdown")
 
-    # 2. Crear Alerta Simplificada (Ejemplo: "BTCUSD 65000" o "GBPUSD 1.3150")
+    # 2. Crear Alerta Simplificada
     elif len(parts) == 2:
         symbol = parts[0].upper().replace("/", "").strip()
         try:
@@ -242,18 +242,21 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             conn.commit()
             conn.close()
 
+            curr_fmt = format_price(current_price, symbol)
+            target_fmt = format_price(target_price, symbol)
+
             await update.message.reply_text(
                 f"✅ **Alerta Creada Exitosamente**\n\n"
                 f"📈 **Activo:** `{symbol}`\n"
-                f"📊 **Precio Actual:** `{current_price:.4f}`\n"
-                f"🎯 **Tipo:** `{tipo}` cuando alcance `{target_price}`",
+                f"📊 **Precio Actual:** `{curr_fmt}`\n"
+                f"🎯 **Tipo:** `{tipo}` cuando alcance `{target_fmt}`",
                 reply_markup=back_btn,
                 parse_mode="Markdown"
             )
         except ValueError:
-            await update.message.reply_text("❌ El precio debe ser un número válido. Ejemplo: `BTCUSD 65000`", reply_markup=back_btn)
+            await update.message.reply_text("❌ El precio debe ser un número válido. Ejemplo: `GBPUSD 1.35340`", reply_markup=back_btn)
 
-    # 3. Crear Alerta con operador explícito (Ejemplo: "GBPUSD > 1.3150")
+    # 3. Crear Alerta con operador explícito
     elif len(parts) == 3 and parts[1] in [">", "<"]:
         symbol = parts[0].upper().replace("/", "").strip()
         condition = parts[1]
@@ -275,11 +278,14 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             conn.commit()
             conn.close()
 
+            curr_fmt = format_price(current_price, symbol)
+            target_fmt = format_price(target_price, symbol)
+
             await update.message.reply_text(
                 f"✅ **Alerta Creada Exitosamente**\n\n"
                 f"📈 **Activo:** `{symbol}`\n"
-                f"📊 **Precio Actual:** `{current_price:.4f}`\n"
-                f"🎯 **Disparar cuando:** `{condition} {target_price}`",
+                f"📊 **Precio Actual:** `{curr_fmt}`\n"
+                f"🎯 **Disparar cuando:** `{condition} {target_fmt}`",
                 reply_markup=back_btn,
                 parse_mode="Markdown"
             )
@@ -306,7 +312,8 @@ async def mis_alertas_callback(query):
     msg = "📋 **Tus Alertas Activas:**\n\n"
     for a in alertas:
         cond_text = "al alza 📈" if a[2] == ">" else "a la baja 📉"
-        msg += f"• **ID `{a[0]}`**: `{a[1]}` ({cond_text}) a `{a[3]}`\n"
+        target_fmt = format_price(a[3], a[1])
+        msg += f"• **ID `{a[0]}`**: `{a[1]}` ({cond_text}) a `{target_fmt}`\n"
     
     await query.message.edit_text(msg, reply_markup=back_btn, parse_mode="Markdown")
 
@@ -350,11 +357,13 @@ async def price_checker_loop(telegram_app):
                                 (condition == "<" and current_price <= target_price)
 
                     if triggered:
+                        curr_fmt = format_price(current_price, symbol)
+                        target_fmt = format_price(target_price, symbol)
                         mensaje = (
                             f"🚨 **¡ALERTA DE PRECIO ALCANZADA!** 🚨\n\n"
                             f"📈 **Símbolo:** `{symbol}`\n"
-                            f"🎯 **Objetivo:** `{condition} {target_price}`\n"
-                            f"💵 **Precio Actual:** `{current_price:.4f}`"
+                            f"🎯 **Objetivo:** `{condition} {target_fmt}`\n"
+                            f"💵 **Precio Actual:** `{curr_fmt}`"
                         )
                         await telegram_app.bot.send_message(chat_id=user_id, text=mensaje, parse_mode="Markdown")
                         cursor.execute("UPDATE alertas SET triggered = 1 WHERE id = ?", (alert_id,))
