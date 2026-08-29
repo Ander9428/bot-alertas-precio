@@ -242,6 +242,9 @@ async def price_checker_loop(telegram_app):
 
         await asyncio.sleep(20)
 
+async def post_init(application: Application):
+    asyncio.create_task(price_checker_loop(application))
+
 # ==========================================
 # 5. INICIALIZACIÓN
 # ==========================================
@@ -250,7 +253,7 @@ def main():
 
     token = os.environ.get("TELEGRAM_TOKEN", "8255701499:AAHiwqeQMacNooE9X_xldFsv-6RrIkyNQ8Q")
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
@@ -258,9 +261,6 @@ def main():
     app.add_handler(CommandHandler("misalertas", mis_alertas))
     app.add_handler(CommandHandler("borrar", borrar_alerta))
     app.add_handler(CommandHandler("precio", consultar_precio))
-
-    loop = asyncio.get_event_loop()
-    loop.create_task(price_checker_loop(app))
 
     print("🚀 Bot de Alertas de Precio iniciado...")
     app.run_polling()
