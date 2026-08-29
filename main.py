@@ -2,10 +2,14 @@ import os
 import asyncio
 import sqlite3
 import threading
+import sys
 from flask import Flask
 import yfinance as yf
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+# Forzar la salida de logs directa en Render
+sys.stdout.reconfigure(line_buffering=True)
 
 # ==========================================
 # 1. SERVIDOR FLASK (Para mantener Render activo)
@@ -18,7 +22,6 @@ def home():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    # use_reloader=False evita conflictos de procesos en Render
     app_flask.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # ==========================================
@@ -86,7 +89,7 @@ def get_live_price(symbol_raw):
             price = float(data['Close'].iloc[-1])
             return price, ticker_symbol
     except Exception as e:
-        print(f"Error consultando precio para {sym}: {e}")
+        print(f"Error consultando precio para {sym}: {e}", flush=True)
         
     return None, ticker_symbol
 
@@ -239,7 +242,7 @@ async def price_checker_loop(telegram_app):
 
             conn.close()
         except Exception as e:
-            print(f"Error en bucle de verificación: {e}")
+            print(f"Error en bucle de verificación: {e}", flush=True)
 
         await asyncio.sleep(20)
 
@@ -247,7 +250,7 @@ async def post_init(application: Application):
     asyncio.create_task(price_checker_loop(application))
 
 # ==========================================
-# 5. INICIALIZACIÓN
+# 5. INICIALIZACIÓN PRINCIPAL
 # ==========================================
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
@@ -263,9 +266,10 @@ def main():
     app.add_handler(CommandHandler("borrar", borrar_alerta))
     app.add_handler(CommandHandler("precio", consultar_precio))
 
-    print("🚀 Bot de Alertas de Precio iniciado...")
-    # stop_signals=None evita que el hilo de Telegram choque con señales del sistema en Render
-    app.run_polling(stop_signals=None)
+    print("🚀 Bot iniciado y listo para recibir comandos en Telegram.", flush=True)
+    
+    # drop_pending_updates=True limpia conexiones previas colgadas en Telegram
+    app.run_polling(drop_pending_updates=True, stop_signals=None)
 
 if __name__ == "__main__":
     main()
