@@ -194,12 +194,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await mis_alertas_callback(query)
 
     elif query.data == "menu_borrar":
-        back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
-        await query.message.edit_text(
-            "🗑️ **Borrar Alerta**\n\nEscribe `/borrar ID` (ejemplo: `/borrar 1`).",
-            reply_markup=back_btn,
-            parse_mode="Markdown"
-        )
+        await menu_borrar_interactivo(query)
+        
+    elif query.data.startswith("del_"):
+        await procesar_borrado_interactivo(query)
 
 # ==========================================
 # 5. MANEJO DE MENSAJES DIRECTOS
@@ -302,7 +300,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ El precio debe ser un número válido.", reply_markup=back_btn)
 
 # ==========================================
-# 6. VERIFICADOR DE ALERTAS SEGUNDO PLANO
+# 6. VERIFICADOR Y MENÚS INTERACTIVOS (SEGUNDO PLANO)
 # ==========================================
 async def mis_alertas_callback(query):
     user_id = query.from_user.id
@@ -322,32 +320,58 @@ async def mis_alertas_callback(query):
     for a in alertas:
         cond_text = "al alza 📈" if a[2] == ">" else "a la baja 📉"
         target_fmt = format_price(a[3], a[1])
-        msg += f"• **ID `{a[0]}`**: `{a[1]}` ({cond_text}) a `{target_fmt}`\n"
+        msg += f"• `{a[1]}` ({cond_text}) a `{target_fmt}`\n"
     
     await query.message.edit_text(msg, reply_markup=back_btn, parse_mode="Markdown")
 
-async def borrar_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not context.args:
-            await update.message.reply_text("❌ Ejemplo: `/borrar 1`")
-            return
-        alert_id = int(context.args[0])
-        user_id = update.effective_user.id
+async def menu_borrar_interactivo(query):
+    user_id = query.from_user.id
+    conn = sqlite3.connect("alertas.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, symbol, condition, target_price FROM alertas WHERE user_id = ? AND triggered = 0", (user_id,))
+    alertas = cursor.fetchall()
+    conn.close()
 
-        conn = sqlite3.connect("alertas.db")
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM alertas WHERE id = ? AND user_id = ?", (alert_id, user_id))
-        rows_affected = cursor.rowcount
-        conn.commit()
-        conn.close()
+    if not alertas:
+        back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")]])
+        await query.message.edit_text("📌 No tienes alertas activas para borrar.", reply_markup=back_btn, parse_mode="Markdown")
+        return
 
-        back_btn = InlineKeyboardMarkup([[InlineKeyboardButton("📱 Menú Principal", callback_data="menu_start")]])
-        if rows_affected > 0:
-            await update.message.reply_text(f"🗑️ Alerta ID `{alert_id}` eliminada.", reply_markup=back_btn, parse_mode="Markdown")
-        else:
-            await update.message.reply_text("⚠️ No se encontró la alerta.", reply_markup=back_btn)
-    except Exception as e:
-        logger.error(f"Error en borrar_alerta: {e}")
+    keyboard = []
+    # Generar un botón por cada alerta activa
+    for a in alertas:
+        alert_id = a[0]
+        symbol = a[1]
+        condition = "📈" if a[2] == ">" else "📉"
+        target_fmt = format_price(a[3], symbol)
+        
+        btn_text = f"❌ Eliminar {symbol} {condition} {target_fmt}"
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"del_{alert_id}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 Volver al Menú", callback_data="menu_start")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(
+        "🗑️ **Selecciona la alerta que deseas eliminar:**\n_Toca un botón para borrarla al instante._",
+        reply_markup=reply_markup, 
+        parse_mode="Markdown"
+    )
+
+async def procesar_borrado_interactivo(query):
+    alert_id = int(query.data.split("_")[1])
+    user_id = query.from_user.id
+
+    conn = sqlite3.connect("alertas.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM alertas WHERE id = ? AND user_id = ?", (alert_id, user_id))
+    conn.commit()
+    conn.close()
+
+    # Mostrar notificación flotante en Telegram
+    await query.answer("✅ Alerta eliminada correctamente")
+    
+    # Refrescar la lista de botones automáticamente
+    await menu_borrar_interactivo(query)
 
 async def price_checker_loop(telegram_app):
     while True:
@@ -398,7 +422,6 @@ def main():
     # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
-    app.add_handler(CommandHandler("borrar", borrar_alerta))
 
     # Botones interactivos
     app.add_handler(CallbackQueryHandler(button_handler))
@@ -406,7 +429,7 @@ def main():
     # Mensajes directos simples
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
-    logger.info("🚀 Bot Optimizado iniciado correctamente.")
+    logger.info("🚀 Bot Optimizado con Borrado Interactivo iniciado correctamente.")
     app.run_polling(drop_pending_updates=True, stop_signals=None)
 
 if __name__ == "__main__":
